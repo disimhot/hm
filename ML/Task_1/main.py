@@ -1,58 +1,1 @@
-from fastapi import FastAPI, status
-from pydantic import BaseModel
-from typing import List, Optional
-from fastapi.encoders import jsonable_encoder
-import pandas as pd
-import numpy as np
-import pickle
-
-# Load saved parameters from the pickle file
-async def load():
-    with open('data/model.pkl', 'rb') as f:
-        loaded_params = pickle.load(f)
-        return loaded_params['model']
-
-def to_df(item):
-    return pd.DataFrame(jsonable_encoder(item))
-
-class Item(BaseModel):
-    name: Optional[str] = None
-    year: int
-    selling_price: Optional[int] = None
-    km_driven: int
-    fuel: str
-    seller_type: str
-    transmission: str
-    owner: str
-    mileage: str
-    engine: str
-    max_power: str
-    torque: str
-    seats: float
-
-class ItemResponse(BaseModel):
-    prediction: int
-class Items(BaseModel):
-    objects: List[Item]
-
-app = FastAPI()
-model = None
-model = None
-# @app.on_event("startup")
-# async def startup_event():
-#     global model
-#     model = await load()
-
-@app.get("/")
-def read_root():
-    return {"message": 123 }
-
-@app.post("/predict_item", response_model=ItemResponse)
-async def predict_item(item: Item) -> float:
-    response = {"prediction": 123 }
-    return response
-
-
-@app.post("/predict_items")
-def predict_items(items: List[Item]) -> List[float]:
-    return {"country":"RU","state":"MOW","stateName":"Moscow","continent":"EU"}
+from contextlib import asynccontextmanagerfrom fastapi import FastAPI, HTTPException, UploadFile, Filefrom fastapi.responses import StreamingResponsefrom pydantic import BaseModelfrom typing import List, Optionalfrom fastapi.encoders import jsonable_encoderimport pandas as pdimport numpy as npimport pickleimport ioimport loggingfrom sklearn import set_configfrom io import StringIOset_config(transform_output="pandas")logging.basicConfig(level=logging.INFO)model = Nonescaler = Nonetransformer = Noneimputer = Nonecategorical_features = ['fuel', 'seller_type', 'transmission', 'owner', 'brand']num_features = ['year', 'km_driven', 'seats', 'mileage', 'engine', 'max_power']car_brands = ["Tata", "Mahindra", "Honda", "Toyota", "Ford", "Hyundai", "Chevrolet", "Volkswagen", "Daewoo",              "Land Rover", "Audi", "Skoda", "Maruti"]@asynccontextmanagerasync def lifespan(app: FastAPI):    global model, scaler, transformer, imputer    try:        with open("data/model.pkl", "rb") as f:            data = pickle.load(f)            model = data['model']            scaler = data['scaler']            transformer = data['transformer']        with open("data/imputer.pkl", "rb") as f:            d = pickle.load(f)            imputer = d['imputer']    except Exception as e:        logging.error(f"Error loading model: {e}")    yieldapp = FastAPI(lifespan=lifespan)def extract_brand(text):    intersection = set(car_brands) & set(text.split())    result = ' '.join(intersection)    return resultdef preprocess_data(df):    cat_features_mask = (df.dtypes == "object").values    df_real = df[df.columns[~cat_features_mask]]    df_real = pd.DataFrame(imputer.transform(df_real), columns=df.columns[~cat_features_mask])    print('columns', df.columns[~cat_features_mask])    df = pd.concat([df[df.columns[cat_features_mask]], df_real], axis=1)    for col in ['mileage', 'engine', 'max_power']:        df[col] = df[col].str.extract(r'(\d+(?:\.\d+)?)').astype('float')    df['brand'] = df['name'].apply(extract_brand)    df.drop(columns=['name', 'selling_price', 'torque'], inplace=True)    df.fillna(0, inplace=True)    df[['engine', 'seats']] = df[['engine', 'seats']].astype('int')    return dfdef transform_item(item):    data = jsonable_encoder(item)    data = pd.DataFrame({key: [value] for key, value in data.items()})    data = preprocess_data(data)    data_cat = transformer.transform(data[categorical_features])    preprocessed_item = pd.concat([data_cat, data[num_features]], axis=1)    return preprocessed_itemdef transform_items(items):    data = preprocess_data(items)    transformer.set_output(transform="pandas")    data_cat = transformer.transform(data[categorical_features])    preprocessed_items = pd.concat([data_cat, data[num_features]], axis=1)    return preprocessed_itemsclass Item(BaseModel):    name: Optional[str] = None    year: int    selling_price: Optional[int] = None    km_driven: int    fuel: str    seller_type: str    transmission: str    owner: str    mileage: str    engine: str    max_power: str    torque: str    seats: floatclass PredictionResponse(BaseModel):    prediction: floatclass PredictionsResponse(BaseModel):    predictions: List[float]class Items(BaseModel):    objects: List[Item]@app.get("/")def read_root():    return {"message": 'Hello Data Scientist!'}@app.post("/predict_item", response_model=PredictionResponse)async def predict_item(item: Item) -> float:    if model is None:        raise HTTPException(status_code=501, detail="Model not loaded")    preprocessed_item = transform_item(item)    prediction = model.predict(preprocessed_item)    return {"prediction": prediction}@app.post("/predict_items", response_model=PredictionsResponse)def predict_items(items: List[Item]) -> List[float]:    if model is None:        raise HTTPException(status_code=501, detail="Model not loaded")    items = pd.DataFrame(jsonable_encoder(items))    preprocessed_items = transform_items(items)    predictions = model.predict(preprocessed_items)    return {"predictions": predictions}@app.post("/predict_upload_items")async def predict_uploaded_items(file: UploadFile = File(...)) -> StreamingResponse:    if model is None:        raise HTTPException(status_code=501, detail="Model not loaded")    contents = await file.read()    data = pd.read_csv(StringIO(contents.decode("utf-8")))    preprocessed_items = transform_items(data)    predictions = model.predict(preprocessed_items)    data["predicted_value"] = predictions    return StreamingResponse(        iter([data.to_csv(index=False)]),        media_type="text/csv",        headers={"Content-Disposition": f"attachment; filename=predictions.csv"}    )

@@ -1,0 +1,17 @@
+[
+  {
+    "name": "Honda Civic 1.8 S AT",
+    "year": 2007,
+    "selling_price": 175000,
+    "km_driven": 218463,
+    "fuel": "Petrol",
+    "seller_type": "Individual",
+    "transmission": "Automatic",
+    "owner": "First Owner",
+    "mileage": "12.9",
+    "engine": "1799",
+    "max_power": "130",
+    "torque": "172Nm",
+    "seats": 5
+  }
+]
